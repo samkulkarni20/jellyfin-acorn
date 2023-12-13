@@ -4,11 +4,20 @@ readme:      "./README.md"
 icon:        "./jellyfin.svg"
 
 args: {
+	// Optional: Jellyfin media volume size
 	storage:      "2G"
-	access_key:   ""
-	secret_key:   ""
+	// Required: Wasabi bucket name
 	bucket_name:  ""
-	endpoint_url: ""
+	// Required: Wasabi bucket region. Default: us-east-1
+	region:       "us-east-1"
+	// Required: Wasabi bucket url. Default: s3.wasabisys.com
+	endpoint_url: "s3.wasabisys.com"
+	// Required: Wasabi access key
+	access_key:      ""
+	// Required: Wasabi secret key
+	secret_key:      ""
+	// Optional: Bucket sync job cron schedule. Default: every 6 hours.
+  rclone_schedule: "0 */6 * * *"
 }
 
 images:	stagedata: containerBuild: {	
@@ -26,52 +35,54 @@ containers: {
 		env: {
 			JELLYFIN_PublishedServerUrl: "@{services.jellyfin.endpoint}"
 		}
-		if args.bucket_name != "" {
-			sidecars: {
-				// This sidecar will run first and only when it exits with exit code 0 will the 
-				// parent "web" container start
-				stagedata: {
-					build: images.stagedata.containerBuild
-					init: true
-					env: {
-						AWS_ACCESS_KEY_ID:     args.access_key
-						AWS_SECRET_ACCESS_KEY: args.secret_key
-						AWS_S3_BUCKET:         args.bucket_name
-						ENDPOINT_URL:          args.endpoint_url
-					}
-					dirs: {
-						"/aws-config.sh": "./aws-config.sh"
-						"/jellyfinmedia": "volume://jellyfinmedia"
-					}
-				}
-			}
-		}
 		dirs: {
 			"/config":        "volume://jellyfinconfig?subpath=config"
 			"/cache":         "volume://jellyfinconfig?subpath=cache"
 			"/jellyfinmedia": "volume://jellyfinmedia"
 		}
 	}
-	if args.bucket_name != "" {
-		bucketsync: {
-			image: "ghcr.io/infracloudio/jellyfin-bucket-sync:v0.0.1"
-			env: {
-				AWS_ACCESS_KEY_ID:     args.access_key
-				AWS_SECRET_ACCESS_KEY: args.secret_key
-				AWS_S3_BUCKET:         args.bucket_name
-				ENDPOINT_URL: 				 args.endpoint_url
-				CRONTAB_STATUS:        "true"
-			}
-			dirs: {
-				"/aws-config.sh": "./aws-config.sh"
-				"/jellyfinmedia": "volume://jellyfinmedia"
-			}
-		}
-	}
+}
+
+jobs: {
+  "rclone-init": {
+      image: "rclone/rclone:latest"
+      env: {
+        RCLONE_CONFIG_MYS3_TYPE: "s3"
+        AWS_ACCESS_KEY_ID:       args.access_key
+        AWS_SECRET_ACCESS_KEY:   args.secret_key
+        AWS_S3_BUCKET:           args.bucket_name
+				REGION:                  args.region
+				ENDPOINT_URL: 				   args.endpoint_url
+      }
+      dirs: {
+        "./rclone-config-script.sh": "./rclone-config-script.sh"
+        "/jellyfinmedia": "volume://jellyfinmedia"
+      }
+      entrypoint: ["/bin/sh", "-c", "./rclone-config-script.sh"]
+  }
+  "rclone-cronjob": {
+      image: "rclone/rclone:latest"
+      env: {
+        RCLONE_CONFIG_MYS3_TYPE: "s3"
+        AWS_ACCESS_KEY_ID:       args.access_key
+        AWS_SECRET_ACCESS_KEY:   args.secret_key
+        AWS_S3_BUCKET:           args.bucket_name
+				REGION:                  args.region
+				ENDPOINT_URL: 				   args.endpoint_url
+      }
+      dirs: {
+        "./rclone-config-script.sh": "./rclone-config-script.sh"
+        "/jellyfinmedia": "volume://jellyfinmedia"
+      }
+      entrypoint: ["/bin/sh", "-c", "./rclone-config-script.sh"]
+      schedule: args.rclone_schedule
+  }
 }
 
 volumes: {
-	jellyfinconfig: {}
+	jellyfinconfig: {
+		size: 1G
+	}
 	jellyfinmedia: {
 		size: args.storage
 	}
